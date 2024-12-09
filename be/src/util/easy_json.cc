@@ -18,6 +18,7 @@
 #include "util/easy_json.h"
 
 #include <glog/logging.h>
+#include <rapidjson/allocators.h>
 #include <rapidjson/document.h>
 #include <rapidjson/rapidjson.h>
 #include <rapidjson/stringbuffer.h>
@@ -103,6 +104,13 @@ EasyJson& EasyJson::operator=(EasyJson::ComplexTypeInitializer val) {
     }
     return (*this);
 }
+
+#ifdef __APPLE__
+template <>
+EasyJson& EasyJson::operator=(unsigned long val) {
+    return EasyJson::operator=(static_cast<uint64_t>(val));
+}
+#endif
 
 EasyJson& EasyJson::SetObject() {
     if (!value_->IsObject()) {
@@ -193,6 +201,7 @@ EasyJson EasyJson::PushBack(EasyJson::ComplexTypeInitializer val) {
         push_val.SetArray();
     } else {
         LOG(FATAL) << "Unknown initializer type";
+        __builtin_unreachable();
     }
     value_->PushBack(push_val, alloc_->allocator());
     return EasyJson(&(*value_)[value_->Size() - 1], alloc_);

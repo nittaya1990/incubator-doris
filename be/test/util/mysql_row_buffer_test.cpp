@@ -17,19 +17,15 @@
 
 #include "util/mysql_row_buffer.h"
 
-#include <gtest/gtest.h>
+#include <gtest/gtest-message.h>
+#include <gtest/gtest-test-part.h>
 #include <string.h>
-#include <sys/types.h>
 
 #include <string>
 
-#include "env/env.h"
-#include "gutil/strings/util.h"
-#include "util/logging.h"
+#include "gtest/gtest_pred_impl.h"
 
 namespace doris {
-
-using namespace strings;
 
 TEST(MysqlRowBufferTest, basic) {
     MysqlRowBuffer mrb;
@@ -120,8 +116,3 @@ TEST(MysqlRowBufferTest, dynamic_mode) {
 }
 
 } // namespace doris
-
-int main(int argc, char** argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

@@ -15,92 +15,77 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#ifndef DORIS_BE_SRC_OLAP_SNAPSHOT_MANAGER_H
-#define DORIS_BE_SRC_OLAP_SNAPSHOT_MANAGER_H
+#pragma once
 
-#include <condition_variable>
-#include <ctime>
-#include <list>
-#include <map>
-#include <mutex>
-#include <set>
+#include <memory>
 #include <string>
-#include <thread>
 #include <vector>
 
 #include "common/status.h"
-#include "olap/data_dir.h"
-#include "olap/field.h"
-#include "olap/olap_common.h"
-#include "olap/olap_define.h"
-#include "olap/push_handler.h"
-#include "olap/rowset/column_data.h"
-#include "olap/tablet.h"
-#include "olap/tablet_meta_manager.h"
-#include "util/doris_metrics.h"
-#include "util/file_utils.h"
+#include "olap/rowset/pending_rowset_helper.h"
+#include "olap/rowset/rowset_fwd.h"
+#include "olap/tablet_fwd.h"
 
 namespace doris {
+class RowsetMetaPB;
+class TSnapshotRequest;
+struct RowsetId;
+class StorageEngine;
+class MemTrackerLimiter;
 
 class SnapshotManager {
 public:
-    ~SnapshotManager() {}
+    SnapshotManager(StorageEngine& engine);
+    ~SnapshotManager();
 
     /// Create a snapshot
     /// snapshot_path: out param, the dir of snapshot
     /// allow_incremental_clone: out param, true if it is an incremental clone
-    OLAPStatus make_snapshot(const TSnapshotRequest& request, std::string* snapshot_path,
-                             bool* allow_incremental_clone);
+    Status make_snapshot(const TSnapshotRequest& request, std::string* snapshot_path,
+                         bool* allow_incremental_clone);
 
-    std::string get_schema_hash_full_path(const TabletSharedPtr& ref_tablet,
-                                          const std::string& location) const;
+    std::string static get_schema_hash_full_path(const TabletSharedPtr& ref_tablet,
+                                                 const std::string& prefix);
 
     // @brief 释放snapshot
     // @param snapshot_path [in] 要被释放的snapshot的路径，只包含到ID
-    OLAPStatus release_snapshot(const std::string& snapshot_path);
+    Status release_snapshot(const std::string& snapshot_path);
 
-    static SnapshotManager* instance();
-
-    OLAPStatus convert_rowset_ids(const string& clone_dir, int64_t tablet_id,
-                                  const int32_t& schema_hash);
+    Result<std::vector<PendingRowsetGuard>> convert_rowset_ids(const std::string& clone_dir,
+                                                               int64_t tablet_id,
+                                                               int64_t replica_id, int64_t table_id,
+                                                               int64_t partition_id,
+                                                               int32_t schema_hash);
 
 private:
-    SnapshotManager() : _snapshot_base_id(0) {}
-
-    OLAPStatus _calc_snapshot_id_path(const TabletSharedPtr& tablet, int64_t timeout_s,
-                                      std::string* out_path);
+    Status _calc_snapshot_id_path(const TabletSharedPtr& tablet, int64_t timeout_s,
+                                  std::string* out_path);
 
     std::string _get_header_full_path(const TabletSharedPtr& ref_tablet,
                                       const std::string& schema_hash_path) const;
 
-    OLAPStatus _link_index_and_data_files(const std::string& header_path,
-                                          const TabletSharedPtr& ref_tablet,
-                                          const std::vector<RowsetSharedPtr>& consistent_rowsets);
+    std::string _get_json_header_full_path(const TabletSharedPtr& ref_tablet,
+                                           const std::string& schema_hash_path) const;
 
-    OLAPStatus _create_snapshot_files(const TabletSharedPtr& ref_tablet,
-                                      const TSnapshotRequest& request, std::string* snapshot_path,
-                                      bool* allow_incremental_clone);
+    Status _link_index_and_data_files(const std::string& header_path,
+                                      const TabletSharedPtr& ref_tablet,
+                                      const std::vector<RowsetSharedPtr>& consistent_rowsets);
 
-    OLAPStatus _prepare_snapshot_dir(const TabletSharedPtr& ref_tablet,
-                                     std::string* snapshot_id_path);
+    Status _create_snapshot_files(const TabletSharedPtr& ref_tablet,
+                                  const TabletSharedPtr& target_tablet,
+                                  const TSnapshotRequest& request, std::string* snapshot_path,
+                                  bool* allow_incremental_clone);
 
-    OLAPStatus _rename_rowset_id(const RowsetMetaPB& rs_meta_pb, const string& new_path,
-                                 TabletSchema& tablet_schema, const RowsetId& next_id,
-                                 RowsetMetaPB* new_rs_meta_pb);
+    Status _prepare_snapshot_dir(const TabletSharedPtr& ref_tablet, std::string* snapshot_id_path);
 
-    OLAPStatus _convert_beta_rowsets_to_alpha(const TabletMetaSharedPtr& new_tablet_meta,
-                                              const vector<RowsetMetaSharedPtr>& rowset_metas,
-                                              const std::string& dst_path);
+    Status _rename_rowset_id(const RowsetMetaPB& rs_meta_pb, const std::string& new_tablet_path,
+                             TabletSchemaSPtr tablet_schema, const RowsetId& next_id,
+                             RowsetMetaPB* new_rs_meta_pb);
 
-private:
-    static SnapshotManager* _s_instance;
-    static std::mutex _mlock;
+    StorageEngine& _engine;
+    std::atomic<uint64_t> _snapshot_base_id {0};
 
-    // snapshot
-    Mutex _snapshot_mutex;
-    uint64_t _snapshot_base_id;
+    std::shared_ptr<MemTrackerLimiter> _mem_tracker;
 }; // SnapshotManager
 
 } // namespace doris
-
-#endif

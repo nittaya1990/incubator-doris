@@ -19,12 +19,16 @@ package org.apache.doris.analysis;
 
 import org.apache.doris.alter.AlterOpType;
 import org.apache.doris.catalog.Column;
+import org.apache.doris.catalog.Env;
+import org.apache.doris.catalog.KeysType;
+import org.apache.doris.catalog.OlapTable;
+import org.apache.doris.catalog.Table;
 import org.apache.doris.common.AnalysisException;
+import org.apache.doris.common.DdlException;
 import org.apache.doris.common.ErrorCode;
 import org.apache.doris.common.ErrorReport;
 
 import com.google.common.base.Strings;
-
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -43,7 +47,9 @@ public class AddColumnClause extends AlterTableClause {
     // set in analyze
     private Column column;
 
-    public Column getColumn() { return column; }
+    public Column getColumn() {
+        return column;
+    }
 
     public ColumnPosition getColPos() {
         return colPos;
@@ -63,10 +69,22 @@ public class AddColumnClause extends AlterTableClause {
     }
 
     @Override
-    public void analyze(Analyzer analyzer) throws AnalysisException {
+    public void analyze(Analyzer analyzer) throws AnalysisException, DdlException {
         if (columnDef == null) {
             throw new AnalysisException("No column definition in add column clause.");
         }
+        if (tableName != null) {
+            Table table = Env.getCurrentInternalCatalog().getDbOrDdlException(tableName.getDb())
+                    .getTableOrDdlException(tableName.getTbl());
+            if (table instanceof OlapTable && ((OlapTable) table).getKeysType() == KeysType.AGG_KEYS
+                    && columnDef.getAggregateType() == null) {
+                columnDef.setIsKey(true);
+            }
+            if (table instanceof OlapTable) {
+                columnDef.setKeysType(((OlapTable) table).getKeysType());
+            }
+        }
+
         columnDef.analyze(true);
         if (colPos != null) {
             colPos.analyze();
@@ -90,6 +108,16 @@ public class AddColumnClause extends AlterTableClause {
     @Override
     public Map<String, String> getProperties() {
         return this.properties;
+    }
+
+    @Override
+    public boolean allowOpMTMV() {
+        return false;
+    }
+
+    @Override
+    public boolean needChangeMTMVState() {
+        return false;
     }
 
     @Override

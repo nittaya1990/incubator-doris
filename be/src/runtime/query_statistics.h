@@ -15,92 +15,99 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#ifndef DORIS_BE_EXEC_QUERY_STATISTICS_H
-#define DORIS_BE_EXEC_QUERY_STATISTICS_H
+#pragma once
 
+#include <gen_cpp/FrontendService_types.h>
+#include <gen_cpp/PaloInternalService_types.h>
+#include <stdint.h>
+
+#include <map>
+#include <memory>
 #include <mutex>
+#include <unordered_map>
+#include <utility>
 
-#include "gen_cpp/data.pb.h"
 #include "util/spinlock.h"
 
 namespace doris {
 
-class QueryStatisticsRecvr;
+class PNodeStatistics;
+class PQueryStatistics;
 
 // This is responsible for collecting query statistics, usually it consists of
 // two parts, one is current fragment or plan's statistics, the other is sub fragment
 // or plan's statistics and QueryStatisticsRecvr is responsible for collecting it.
 class QueryStatistics {
 public:
-    QueryStatistics() : scan_rows(0), scan_bytes(0), cpu_ms(0), returned_rows(0) {}
+    QueryStatistics()
+            : scan_rows(0),
+              scan_bytes(0),
+              cpu_nanos(0),
+              returned_rows(0),
+              max_peak_memory_bytes(0),
+              current_used_memory_bytes(0),
+              shuffle_send_bytes(0),
+              shuffle_send_rows(0) {}
+    virtual ~QueryStatistics();
 
-    void merge(const QueryStatistics& other) {
-        scan_rows += other.scan_rows;
-        scan_bytes += other.scan_bytes;
-        cpu_ms += other.cpu_ms;
+    void merge(const QueryStatistics& other);
+
+    void add_scan_rows(int64_t delta_scan_rows) { scan_rows += delta_scan_rows; }
+
+    void add_scan_bytes(int64_t delta_scan_bytes) { scan_bytes += delta_scan_bytes; }
+
+    void add_cpu_nanos(int64_t delta_cpu_time) { cpu_nanos += delta_cpu_time; }
+
+    void add_shuffle_send_bytes(int64_t delta_bytes) { shuffle_send_bytes += delta_bytes; }
+
+    void add_shuffle_send_rows(int64_t delta_rows) { shuffle_send_rows += delta_rows; }
+
+    void add_scan_bytes_from_local_storage(int64_t scan_bytes_from_local_storage) {
+        _scan_bytes_from_local_storage += scan_bytes_from_local_storage;
     }
 
-    void add_scan_rows(int64_t scan_rows) { this->scan_rows += scan_rows; }
-
-    void add_scan_bytes(int64_t scan_bytes) { this->scan_bytes += scan_bytes; }
-
-    void add_cpu_ms(int64_t cpu_ms) { this->cpu_ms += cpu_ms; }
-
-    void set_returned_rows(int64_t num_rows) { this->returned_rows = num_rows; }
-
-    void merge(QueryStatisticsRecvr* recvr);
-
-    void clear() {
-        scan_rows = 0;
-        scan_bytes = 0;
-        cpu_ms = 0;
-        returned_rows = 0;
+    void add_scan_bytes_from_remote_storage(int64_t scan_bytes_from_remote_storage) {
+        _scan_bytes_from_remote_storage += scan_bytes_from_remote_storage;
     }
 
-    void to_pb(PQueryStatistics* statistics) {
-        DCHECK(statistics != nullptr);
-        statistics->set_scan_rows(scan_rows);
-        statistics->set_scan_bytes(scan_bytes);
-        statistics->set_cpu_ms(cpu_ms);
-        statistics->set_returned_rows(returned_rows);
+    void add_returned_rows(int64_t num_rows) { returned_rows += num_rows; }
+
+    void set_max_peak_memory_bytes(int64_t max_peak_memory_bytes) {
+        this->max_peak_memory_bytes = max_peak_memory_bytes;
     }
 
-    void from_pb(const PQueryStatistics& statistics) {
-        scan_rows = statistics.scan_rows();
-        scan_bytes = statistics.scan_bytes();
-        cpu_ms = statistics.cpu_ms();
+    void set_current_used_memory_bytes(int64_t current_used_memory) {
+        current_used_memory_bytes = current_used_memory;
     }
+
+    void to_pb(PQueryStatistics* statistics);
+    void to_thrift(TQueryStatistics* statistics) const;
+    void from_pb(const PQueryStatistics& statistics);
+    bool collected() const { return _collected; }
+
+    int64_t get_scan_rows() { return scan_rows; }
+    int64_t get_scan_bytes() { return scan_bytes; }
+    int64_t get_current_used_memory_bytes() { return current_used_memory_bytes; }
 
 private:
-    int64_t scan_rows;
-    int64_t scan_bytes;
-    int64_t cpu_ms;
+    std::atomic<int64_t> scan_rows;
+    std::atomic<int64_t> scan_bytes;
+    std::atomic<int64_t> cpu_nanos;
+    std::atomic<int64_t> _scan_bytes_from_local_storage;
+    std::atomic<int64_t> _scan_bytes_from_remote_storage;
     // number rows returned by query.
     // only set once by result sink when closing.
-    int64_t returned_rows;
-};
+    std::atomic<int64_t> returned_rows;
+    // Maximum memory peak for all backends.
+    // only set once by result sink when closing.
+    std::atomic<int64_t> max_peak_memory_bytes;
+    bool _collected = false;
+    std::atomic<int64_t> current_used_memory_bytes;
 
+    std::atomic<int64_t> shuffle_send_bytes;
+    std::atomic<int64_t> shuffle_send_rows;
+};
+using QueryStatisticsPtr = std::shared_ptr<QueryStatistics>;
 // It is used for collecting sub plan query statistics in DataStreamRecvr.
-class QueryStatisticsRecvr {
-public:
-    ~QueryStatisticsRecvr();
-
-    void insert(const PQueryStatistics& statistics, int sender_id);
-
-private:
-    friend class QueryStatistics;
-
-    void merge(QueryStatistics* statistics) {
-        std::lock_guard<SpinLock> l(_lock);
-        for (auto& pair : _query_statistics) {
-            statistics->merge(*(pair.second));
-        }
-    }
-
-    std::map<int, QueryStatistics*> _query_statistics;
-    SpinLock _lock;
-};
 
 } // namespace doris
-
-#endif
